@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=600, initial-scale=1">
+<meta name="description" content="Golf HUD for Meta Ray-Ban Display glasses: GPS yardages, club pick, scorecard, shot tracker, putt helper, range games and stats for Coyote Creek.">
+<meta name="mrbd-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>Coyote HUD</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="64x64" href="icon-64.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@600;700&display=swap">
+<style>
+/* Layout: one fixed 600x600 glance screen; header, centered body, button rows at the bottom. */
+:root{
+  --bg:#000000; --fg:#F3F5F2; --dim:#9AA59D; --line:#262D28; --panel:#0A0D0B;
+  --go:#64F2B5; --go-ink:#01301F; --warn:#FFC24B; --bad:#FF7B6B;
+  --font:"Barlow",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --num:"Barlow Semi Condensed","Barlow",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:22px;line-height:1.25;-webkit-text-size-adjust:none}
+body{overflow:hidden}
+.screen{box-sizing:border-box;width:600px;height:600px;padding:16px 22px 18px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:20px;color:var(--dim);min-height:26px;white-space:nowrap}
+.top b{color:var(--fg);font-weight:600;font-size:23px}
+.body{flex:1;min-height:0;display:flex;flex-direction:column;gap:8px;justify-content:center}
+.num{font-family:var(--num);font-weight:700;font-variant-numeric:tabular-nums;line-height:.9;letter-spacing:-.01em}
+.huge{font-size:150px}
+.big{font-size:88px}
+.mid{font-size:46px}
+.lbl{color:var(--dim);font-size:20px}
+.row{display:flex;gap:10px}
+.row>*{flex:1;min-width:0}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+button{font:inherit;font-weight:500;font-size:22px;color:var(--fg);background:var(--panel);border:2px solid var(--line);border-radius:14px;min-height:58px;padding:8px 12px;cursor:pointer;text-align:center;line-height:1.1;overflow:hidden;text-overflow:ellipsis}
+button:focus,button:focus-visible{outline:none;border-color:var(--go);box-shadow:0 0 0 3px var(--go);color:#fff}
+button.go{background:var(--go);color:var(--go-ink);border-color:var(--go);font-weight:600}
+button.go:focus{box-shadow:0 0 0 3px #fff;color:var(--go-ink)}
+button.sm{min-height:48px;font-size:20px;padding:6px 8px;border-radius:12px}
+button.xs{min-height:42px;font-size:18px;padding:4px 6px;border-radius:10px}
+button[aria-pressed="true"]{border-color:var(--go);color:var(--go)}
+button.warn{color:var(--warn)}
+.go-text{color:var(--go)} .warn-text{color:var(--warn)} .bad-text{color:var(--bad)}
+.line{display:flex;justify-content:space-between;gap:12px;font-size:22px}
+.line span:last-child{font-variant-numeric:tabular-nums;color:var(--fg)}
+.line span:first-child{color:var(--dim)}
+.muted{color:var(--dim)}
+.center{text-align:center}
+.split{display:flex;gap:14px;align-items:center;min-height:0}
+.split>*{min-width:0}
+textarea,input[type="text"]{font:inherit;font-size:22px;color:var(--fg);background:var(--panel);border:2px solid var(--line);border-radius:14px;padding:10px 12px;width:100%;box-sizing:border-box;resize:none}
+textarea:focus,input:focus{outline:none;border-color:var(--go);box-shadow:0 0 0 3px var(--go)}
+.bar{height:26px;border:2px solid var(--line);border-radius:13px;overflow:hidden;background:var(--panel)}
+.bar i{display:block;height:100%;background:var(--go);width:0}
+.tbl{display:grid;grid-template-columns:1.2fr 1fr 1fr 1fr;gap:4px 12px;font-size:21px;font-variant-numeric:tabular-nums}
+.tbl .h{color:var(--dim);font-size:18px}
+.tbl .r{text-align:right}
+.pill{display:inline-block;border:2px solid var(--line);border-radius:999px;padding:2px 12px;font-size:18px;color:var(--dim)}
+.pill.on{border-color:var(--warn);color:var(--warn)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<main id="app" class="screen" aria-live="polite"></main>
+<script>
+'use strict';
+/* ---------- course data (Coyote Creek Golf Club, Morgan Hill CA) ---------- */
+const COURSES={
+  tournament:{name:'Tournament',par:[4,3,5,5,3,4,3,4,4,4,4,5,4,3,4,4,5,4],
+    tees:{Black:[431,195,552,512,163,437,167,377,412,416,320,582,444,198,425,432,533,431],
+      Blue:[398,175,536,494,143,407,150,360,386,388,294,569,421,185,406,407,508,406],
+      White:[384,158,530,487,136,396,142,342,378,381,282,562,407,156,395,393,496,395],
+      Gold:[347,130,505,464,115,366,120,303,354,331,259,536,390,144,356,358,471,358],
+      Red:[312,110,456,430,74,333,100,224,316,312,242,495,344,115,320,308,393,300]}},
+  valley:{name:'Valley',par:[4,5,4,4,4,5,3,4,4,4,3,4,3,5,4,4,3,5],
+    tees:{Blue:[439,529,380,425,386,497,209,408,441,436,181,456,156,582,409,448,166,518],
+      White:[395,512,353,408,352,474,166,380,412,389,174,418,141,528,369,416,158,513],
+      Gold:[347,489,342,398,334,471,144,366,394,341,159,374,115,511,354,401,138,495],
+      Red:[284,413,267,351,275,430,112,284,297,303,116,346,102,455,303,335,104,410]}}
+};
+const CLUBHOUSE={lat:37.1929,lon:-121.7015};
+const mk=rows=>rows.map(([id,name,carry,dist,on])=>({id,name,carry,dist,on:on!==false}));
+const GENERIC_BAG=mk([['D','Driver',205,230],['3W','3 wood',190,210],['5W','5 wood',178,195],['4H','4 hybrid',170,185],['5i','5 iron',162,175],['6i','6 iron',153,165],['7i','7 iron',144,155],['8i','8 iron',135,145],['9i','9 iron',125,135],['PW','Pitching wedge',112,120],['GW','Gap wedge',98,105],['SW','Sand wedge',84,90],['LW','Lob wedge',70,75]]);
+/* Dakota's fitting, TrackMan report 2026-11-01 (PGA TOUR Superstore, Gabe Guerrero). Carry/total from solid strikes; irons other than the 7 are spaced from the fitted 7-iron. */
+const FITTED_BAG=mk([['D','G440 Max 10.5° driver',126,164],['3W','3 wood',130,165,false],['5W','5 wood',125,160,false],['7W','G440 Max 7 wood',120,150,false],['4H','G440 4 hybrid',152,190],['5i','G440 5 iron',146,178],['6i','G440 6 iron',135,166],['7i','G440 7 iron',124,154],['8i','G440 8 iron',113,141],['9i','G440 9 iron',102,128],['PW','G440 pitching wedge',91,114],['UW','G440 utility wedge',80,100],['SW','56° wedge',66,84],['LW','Lob wedge',55,65,false]]);
+const FIT={date:'Nov 1, 2026',fitter:'Gabe Guerrero · PGA TOUR Superstore',
+  recommended:['G440 Max 10.5° driver · Alta CB 50 SR','G440 4H · Alta Quick 35g','G440 5–UW irons · Alta CB AWT SR','Scotty Cameron Phantom 9.R, 35 in'],
+  clubs:{D:{model:'G440 Max 10.5 · Alta CB 50 SR',cs:76,bs:105,spin:3566,launch:8.7,height:20,carry:126,total:164,side:'right',shots:8,note:'launch is low for a driver; the R7 Mini 13.5 was steadier (128 carry / 163 total)'},
+    '4H':{model:'G440 4H · Alta Quick',cs:72,bs:110,spin:2760,launch:13,height:43,carry:152,total:190,side:'a little right',shots:3,note:'longest and tightest club in the test, 3 for 3'},
+    '7i':{model:'G440 7i · Alta CB AWT SR',cs:61,bs:92,spin:2894,launch:17.9,height:44,carry:124,total:154,side:'right',shots:3,note:'carry within 6 yards on all 3; other 7-iron heads tested far worse'},
+    SW:{model:'56° wedge',cs:57,bs:70,spin:4900,launch:21,height:30,carry:66,total:84,side:'both ways',shots:22,note:'very scattered session; treat this number as a starting point'}},
+  tendency:'Miss is right with the long clubs (driver, hybrids, 7-iron all averaged right of target).'};
+const DEFAULT_BAG=FITTED_BAG;
+const HAZ=['Water','Bunker','Layup','Dogleg','Trees','OB'];
+const KEY='coyotehud.v1';
+const DESKTOP=/desktop/.test(location.search);
+const DEMO_PARAM=/demo/.test(location.search);
+
+/* ---------- state ---------- */
+function defaults(){return {v:1,
+  settings:{course:'tournament',tee:'White',tournament:false,green:'medium',windMode:'manual',wind:{speed:0,dir:'calm'},voice:false,sound:true,demo:DEMO_PARAM,name:'Me',sync:''},
+  bag:JSON.parse(JSON.stringify(DEFAULT_BAG)),maps:{},notes:{},rounds:[],active:null,pid:'p'+Math.random().toString(36).slice(2,8),recent:[],
+  putt:{breakK:1,paceK:1,n:0},range:{best:0,games:[]},head:[],ui:{hole:0,pin:'mid',elev:0}};}
+function load(){let s=null;try{s=JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){}
+  const d=defaults(); if(!s||typeof s!=='object') return d;
+  for(const k in d) if(s[k]===undefined) s[k]=d[k];
+  s.settings={...d.settings,...s.settings}; s.ui={...d.ui,...s.ui}; s.putt={...d.putt,...s.putt}; s.range={...d.range,...s.range};
+  if(DEMO_PARAM) s.settings.demo=true;
+  s.rounds.forEach(r=>{r.others=r.others||[];r.remote=r.remote||{};});
+  if(s.fitV!==1){s.bag=JSON.parse(JSON.stringify(FITTED_BAG));s.fitV=1;}
+  s.bag.forEach(c=>{if(c.carry===undefined)c.carry=Math.round(c.dist*0.88);});
+  return s;}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+let S=load();
+const $=s=>document.querySelector(s);
+const app=$('#app');
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const course=()=>COURSES[S.settings.course];
+const teeList=()=>Object.keys(course().tees);
+const par=(h=S.ui.hole)=>course().par[h];
+const teeYds=(h=S.ui.hole)=>{const t=course().tees; return (t[S.settings.tee]||t[Object.keys(t)[0]])[h];};
+const round=()=>S.rounds.find(r=>r.id===S.active)||null;
+const hole=(r=round(),h=S.ui.hole)=>r?r.holes[h]:null;
+
+/* ---------- geo ---------- */
+const R=6371000, toR=x=>x*Math.PI/180, toD=x=>x*180/Math.PI;
+function mDist(a,b){const dLat=toR(b.lat-a.lat),dLon=toR(b.lon-a.lon);const h=Math.sin(dLat/2)**2+Math.cos(toR(a.lat))*Math.cos(toR(b.lat))*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
+const yds=(a,b)=>Math.round(mDist(a,b)*1.09361);
+function bearing(a,b){const y=Math.sin(toR(b.lon-a.lon))*Math.cos(toR(b.lat));const x=Math.cos(toR(a.lat))*Math.sin(toR(b.lat))-Math.sin(toR(a.lat))*Math.cos(toR(b.lat))*Math.cos(toR(b.lon-a.lon));return (toD(Math.atan2(y,x))+360)%360;}
+function offsetPt(p,brg,ydsAway){const m=ydsAway/1.09361,la1=toR(p.lat),lo1=toR(p.lon),b=toR(brg),dr=m/R;const la2=Math.asin(Math.sin(la1)*Math.cos(dr)+Math.cos(la1)*Math.sin(dr)*Math.cos(b));const lo2=lo1+Math.atan2(Math.sin(b)*Math.sin(dr)*Math.cos(la1),Math.cos(dr)-Math.sin(la1)*Math.sin(la2));return {lat:toD(la2),lon:toD(lo2)};}
+const norm180=a=>((a+540)%360)-180;
+
+let pos=null,gpsErr=null,watchId=null;
+function startGPS(){
+  if(S.settings.demo){pos={lat:CLUBHOUSE.lat+0.002,lon:CLUBHOUSE.lon,acc:5,demo:true};gpsErr=null;return;}
+  if(pos&&pos.demo) pos=null;
+  if(!('geolocation' in navigator)){gpsErr='no GPS';return;}
+  if(watchId!==null) return;
+  try{watchId=navigator.geolocation.watchPosition(p=>{pos={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy||10,alt:p.coords.altitude,t:Date.now()};gpsErr=null;refresh();},
+    e=>{gpsErr=e.code===1?'GPS off':'no GPS';refresh();},{enableHighAccuracy:true,maximumAge:2000,timeout:20000});}
+  catch(e){gpsErr='no GPS';}
+}
+function stopDemo(){if(watchId!==null&&navigator.geolocation){try{navigator.geolocation.clearWatch(watchId)}catch(e){}watchId=null;}pos=null;}
+const gpsText=()=>pos?(pos.demo?'DEMO GPS':'GPS ±'+Math.max(1,Math.round(pos.acc*1.09))+'y'):(gpsErr||'GPS…');
+
+/* heading (experimental) */
+let heading=null,orientOn=false;
+function onOrient(e){let h=null;if(typeof e.webkitCompassHeading==='number')h=e.webkitCompassHeading;else if(typeof e.alpha==='number')h=(360-e.alpha)%360;if(h!==null){heading=h;if(orientCb)orientCb(e);}}
+let orientCb=null;
+async function startOrient(){if(orientOn)return true;try{if(typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function'){const r=await DeviceOrientationEvent.requestPermission();if(r!=='granted')return false;}
+  window.addEventListener('deviceorientationabsolute',onOrient,true);window.addEventListener('deviceorientation',onOrient,true);orientOn=true;return true;}catch(e){return false;}}
+
+/* ---------- golf math ---------- */
+function mapFor(){const c=S.settings.course;return (S.maps[c]||{})[S.ui.hole]||null;}
+function setMap(fn){const c=S.settings.course;S.maps[c]=S.maps[c]||{};const m=S.maps[c][S.ui.hole]||{haz:[]};m.haz=m.haz||[];fn(m);S.maps[c][S.ui.hole]=m;save();}
+function green(){const m=mapFor();if(m&&(m.mid||m.front||m.back))return m;
+  if(S.settings.demo&&pos){const y=Math.max(90,Math.round(teeYds()*0.38));const h=S.ui.hole;const brg=(h*37)%360;
+    return {mid:offsetPt(pos,brg,y),front:offsetPt(pos,brg,y-12),back:offsetPt(pos,brg,y+13),haz:[{t:'Bunker',...offsetPt(pos,brg+6,y-28)},{t:'Layup',...offsetPt(pos,brg,Math.max(40,y-110))}],demo:true};}
+  return null;}
+function targetPt(g){return g[S.ui.pin]||g.mid||g.front||g.back;}
+function pickClub(target){const clubs=S.bag.filter(c=>c.on&&c.id!=='D').sort((a,b)=>a.carry-b.carry);if(!clubs.length)return null;
+  const enough=clubs.filter(c=>c.carry>=target);let c=enough.length?enough[0]:clubs[clubs.length-1];
+  const i=clubs.indexOf(c);let note='';
+  if(!enough.length)note='all you have';else if(target<clubs[0].carry-15)note='easy swing';else if(c.carry-target>=10&&clubs[i-1]&&target-clubs[i-1].carry<=4)note='or smooth '+clubs[i-1].id;
+  return {c,longer:clubs[i+1]||null,note};}
+function windPct(shotBrg){const w=S.settings.wind;let comp=0;
+  if(S.settings.windMode==='auto'&&wx){comp=wx.speed*Math.cos(toR(wx.from-shotBrg));}
+  else{if(w.dir==='into')comp=w.speed;else if(w.dir==='down')comp=-w.speed;}
+  return {pct:comp>0?comp*0.01:comp*0.005,comp:Math.round(comp)};}
+let wx=null,wxErr='';
+async function fetchWind(){try{const r=await fetch('https://api.open-meteo.com/v1/forecast?latitude='+CLUBHOUSE.lat+'&longitude='+CLUBHOUSE.lon+'&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=mph');const j=await r.json();wx={speed:Math.round(j.current.wind_speed_10m),from:j.current.wind_direction_10m,t:Date.now()};wxErr='';}catch(e){wx=null;wxErr='live wind unavailable here';}}
+
+/* putting model: inches of break per foot, scaled by speed, slope, and what we learn */
+function puttRead(d,dir,amt,slope){const g={slow:0.85,medium:1,fast:1.2}[S.settings.green]||1;
+  const perFt={little:0.5,medium:1.0,lots:1.7}[amt];const sl={up:0.8,flat:1,down:1.25}[slope];
+  const inches=dir==='straight'?0:d*perFt*g*sl*S.putt.breakK;const cups=inches/4.25;
+  const pace=d*({up:1.2,flat:1,down:0.8}[slope])*({slow:1.1,medium:1,fast:0.9}[S.settings.green]||1)*S.putt.paceK;
+  return {inches,cups,pace:Math.round(pace),side:dir==='right'?'left':dir==='left'?'right':''};}
+const fmtCups=c=>c<0.25?'at the hole':c<0.75?'half a cup':c<1.25?'1 cup':c<6?Math.round(c*2)/2+' cups':(c*4.25/12).toFixed(1)+' ft';
+
+/* ---------- speech ---------- */
+function speak(t){if(!S.settings.voice)return;try{if(!('speechSynthesis' in window))return;speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(t));}catch(e){}}
+let actx=null;function beep(f=880,ms=60){if(!S.settings.sound)return;try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=f;g.gain.value=0.15;o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+ms/1000);}catch(e){}}
+
+/* ---------- navigation ---------- */
+let stack=[{name:'home'}];
+const LIVE=new Set(['play','map','aim','head']);
+function current(){return stack[stack.length-1];}
+/* One spare history entry sits under us while we're off the home screen, so the shell's Back comes to us as popstate. On home, Back leaves the app. */
+let trap=false;
+function ensureTrap(){if(!trap&&stack.length>1){try{history.pushState({hud:1},'');trap=true;}catch(e){}}}
+function go(name,p){stack.push({name,p});render();ensureTrap();}
+function back(){if(stack.length>1){stack.pop();render();}}
+function popTo(name){while(stack.length>1&&current().name!==name)stack.pop();render();}
+function home(){stack=[{name:'home'}];render();}
+window.addEventListener('popstate',()=>{trap=false;if(stack.length>1){stack.pop();render();ensureTrap();}});
+function refresh(){if(LIVE.has(current().name))render(true);else{const c=$('#clk');if(c)c.textContent=clock();const g=$('#gps');if(g)g.textContent=gpsText();}}
+function render(keep){const cur=current();const fk=keep&&document.activeElement&&document.activeElement.dataset?document.activeElement.dataset.a:null;
+  const view=V[cur.name]||V.home;app.innerHTML=view(cur.p||{});
+  let f=fk?app.querySelector('[data-a="'+CSS.escape(fk)+'"]'):null;if(!f)f=app.querySelector('[data-focus]')||app.querySelector('button');if(f)f.focus({preventScroll:true});}
+app.addEventListener('click',e=>{const b=e.target.closest('[data-a]');if(!b)return;const [act,...args]=b.dataset.a.split(':');if(A[act])A[act](...args,b);});
+
+/* desktop keys: arrows move focus (the glasses browser does this natively) */
+if(DESKTOP){document.addEventListener('keydown',e=>{const t=document.activeElement;const typing=t&&(t.tagName==='TEXTAREA'||t.tagName==='INPUT');
+  if((e.key==='Escape'||(e.key==='Backspace'&&!typing))){e.preventDefault();back();return;}
+  if(!e.key.startsWith('Arrow')||typing)return;e.preventDefault();
+  const els=[...app.querySelectorAll('button:not([disabled]),textarea,input')];if(!els.includes(t)){if(els[0])els[0].focus();return;}
+  const r=t.getBoundingClientRect(),cx=r.left+r.width/2,cy=r.top+r.height/2;let best=null,bd=1e9;
+  for(const el of els){if(el===t)continue;const b=el.getBoundingClientRect(),dx=b.left+b.width/2-cx,dy=b.top+b.height/2-cy;let d=-1;
+    if(e.key==='ArrowRight'&&dx>6)d=dx+Math.abs(dy)*3;if(e.key==='ArrowLeft'&&dx<-6)d=-dx+Math.abs(dy)*3;if(e.key==='ArrowDown'&&dy>6)d=dy+Math.abs(dx)*1.5;if(e.key==='ArrowUp'&&dy<-6)d=-dy+Math.abs(dx)*1.5;
+    if(d>=0&&d<bd){bd=d;best=el;}}
+  if(best)best.focus();});}
+
+/* ---------- shared bits ---------- */
+function clock(){const d=new Date();let h=d.getHours(),m=d.getMinutes();const ap=h>=12?'PM':'AM';h=h%12||12;let s=h+':'+String(m).padStart(2,'0')+' '+ap;
+  const r=round();if(r&&r.start){const el=Math.floor((Date.now()-r.start)/60000);s=Math.floor(el/60)+':'+String(el%60).padStart(2,'0')+' · '+s;}return s;}
+const hdr=(l,r)=>'<div class="top"><div>'+l+'</div><div><span id="clk">'+(r!==undefined?r:clock())+'</span></div></div>';
+const btn=(a,label,cls='',extra='')=>'<button data-a="'+esc(a)+'" class="'+cls+'" '+extra+'>'+label+'</button>';
+const backBtn=(l='◀ Back')=>btn('back',l,'sm');
+function toParText(r){let s=0,n=0;r.holes.forEach((h,i)=>{if(h.strokes>0){s+=h.strokes-course().par[i];n++;}});return {n,s,txt:n?(s===0?'E':(s>0?'+':'')+s):'–'};}
+function newHole(){return {strokes:0,putts:0,fir:null,shots:[]};}
+function startRound(code){const r={id:Date.now(),course:S.settings.course,tee:S.settings.tee,start:Date.now(),end:null,holes:Array.from({length:18},newHole),others:[],remote:{},code:code||(S.settings.sync?makeCode():null)};S.rounds.push(r);S.active=r.id;S.ui.hole=0;S.ui.pin='mid';S.ui.elev=0;save();}
+function logPutt(n=1){const h=hole();if(!h)return false;h.putts+=n;h.strokes+=n;save();changed();return true;}
+
+/* ---------- players and live sync ---------- */
+/* Others on this pair of glasses are scored by hand. Friends on their own glasses join with the round code and their scores arrive over a shared Firebase Realtime Database (REST, no SDK). */
+const makeCode=()=>Array.from({length:4},()=>'ABCDEFGHJKMNPQRSTUVWXYZ'[Math.floor(Math.random()*23)]).join('');
+const syncBase=()=>(S.settings.sync||'').trim().replace(/\/+$/,'');
+const syncOn=()=>!!(syncBase()&&round()&&round().code);
+let syncErr='',pushT=0,pullT=0,syncBusy=false;
+function changed(){if(!syncOn())return;clearTimeout(pushT);pushT=setTimeout(pushMine,1200);}
+function pushMine(){if(!syncOn())return;const r=round();const body={name:S.settings.name||'Me',holes:r.holes.map(h=>({strokes:h.strokes,putts:h.putts,fir:h.fir})),updated:Date.now()};
+  fetch(syncBase()+'/rounds/'+r.code+'/'+S.pid+'.json',{method:'PUT',body:JSON.stringify(body)}).then(()=>{syncErr='';}).catch(()=>{syncErr='sync failed';});}
+async function pullOthers(force){if(!syncOn()||syncBusy)return;if(!force&&Date.now()-pullT<15000)return;syncBusy=true;pullT=Date.now();
+  try{const r=round();const res=await fetch(syncBase()+'/rounds/'+r.code+'.json');const j=(await res.json())||{};const rem={};for(const k in j){if(k!==S.pid&&j[k]&&Array.isArray(j[k].holes))rem[k]=j[k];}r.remote=rem;r.syncT=Date.now();syncErr='';save();
+    if(['board','score','play','players'].includes(current().name))render(true);}
+  catch(e){syncErr='sync failed';if(current().name==='board')render(true);}
+  syncBusy=false;}
+setInterval(()=>{if(syncOn()&&['board','score','play','players'].includes(current().name))pullOthers();},15000);
+/* every player in this round: me, hand-scored friends, and live friends */
+function players(r=round()){if(!r)return[];const list=[{id:'me',name:S.settings.name||'Me',holes:r.holes,me:true}];(r.others||[]).forEach(o=>list.push({id:o.id,name:o.name,holes:o.holes,manual:true}));
+  Object.entries(r.remote||{}).forEach(([k,v])=>list.push({id:k,name:v.name||'Friend',holes:v.holes,live:true,updated:v.updated}));return list;}
+function toParOf(holes,c=course()){let s=0,n=0,p=0;holes.forEach((h,i)=>{if(h&&h.strokes>0){s+=h.strokes-c.par[i];n++;p+=h.putts||0;}});return {n,s,putts:p,txt:n?(s===0?'E':(s>0?'+':'')+s):'–'};}
+function skins(ps){const won={};let carry=0,lastHole=-1;ps.forEach(p=>won[p.id]=0);
+  for(let i=0;i<18;i++){const sc=ps.map(p=>p.holes[i]&&p.holes[i].strokes>0?p.holes[i].strokes:null);if(sc.some(s=>s===null))break;lastHole=i;const lo=Math.min(...sc);const w=sc.filter(s=>s===lo);if(w.length===1){won[ps[sc.indexOf(lo)].id]+=1+carry;carry=0;}else carry++;}
+  return {won,carry,thru:lastHole+1};}
+function matchPlay(a,b){let up=0,n=0;for(let i=0;i<18;i++){const x=a.holes[i]&&a.holes[i].strokes,y=b.holes[i]&&b.holes[i].strokes;if(!x||!y)break;n++;if(x<y)up++;else if(y<x)up--;}return {up,n};}
+setInterval(()=>{const c=$('#clk');if(c&&!LIVE.has(current().name))c.textContent=clock();else if(c)refresh();},20000);
+
+/* ---------- views ---------- */
+const V={};
+V.home=()=>{const r=round();const c=course();
+  return hdr('<b>Coyote HUD</b>',gpsText())+
+  '<div class="body"><div class="center"><div class="num mid">Coyote Creek</div><div class="lbl">'+c.name+' course · '+esc(S.settings.tee)+' tees'+(S.settings.tournament?' · <span class="warn-text">tournament mode</span>':'')+'</div></div>'+
+  (r?btn('resume','▶ Resume round · Hole '+(S.ui.hole+1)+' · '+toParText(r).txt+(r.code?' · code '+r.code:''),'go','data-focus'):
+    (syncBase()?'<div class="row">'+btn('start','▶ Start round','go','data-focus')+btn('go:join','Join a round')+'</div>':btn('start','▶ Start round','go','data-focus')))+
+  '<div class="row">'+btn('go:range','Range')+btn('go:stats','Stats')+'</div><div class="row">'+btn('go:bag','My bag')+btn('go:settings','Settings')+'</div></div>';};
+
+V.join=()=>hdr('<b>Join a round</b>','as '+esc(S.settings.name))+'<div class="body"><div class="lbl center">Type the 4-letter code from your buddy\'s glasses. You get the full app for your own game, and the leaderboard shows everyone.</div><input id="code" type="text" maxlength="4" autocapitalize="characters" placeholder="ABCD" style="text-align:center;font-size:40px;font-family:var(--num);letter-spacing:.2em" data-focus></div><div class="row">'+backBtn()+btn('join2','Join ▶','go')+'</div>';
+
+V.play=()=>{const h=S.ui.hole,p=par(h),ty=teeYds(h),r=round(),hd=hole();const g=green();const tm=S.settings.tournament;
+  let body='';
+  if(g&&pos){const t=targetPt(g);const d=yds(pos,t);const f=g.front?yds(pos,g.front):null,m=g.mid?yds(pos,g.mid):null,b=g.back?yds(pos,g.back):null;
+    const brg=bearing(pos,t);const w=windPct(brg);const elev=S.ui.elev;const plays=Math.round(d*(1+w.pct)+elev/3);
+    body+='<div class="split"><div class="num huge">'+d+'</div><div style="flex:1"><div class="lbl">to '+S.ui.pin+(g.demo?' · <span class="warn-text">demo green</span>':'')+'</div>'+
+      '<div class="line"><span>front</span><span>'+(f??'–')+'</span></div><div class="line"><span>middle</span><span>'+(m??'–')+'</span></div><div class="line"><span>back</span><span>'+(b??'–')+'</span></div></div></div>';
+    if(!tm){let adj=[];if(w.comp)adj.push((w.comp>0?'into ':'down ')+Math.abs(w.comp));if(elev)adj.push((elev>0?'+':'')+elev+' ft');
+      const pk=pickClub(plays);
+      body+='<div class="line"><span>plays like</span><span>'+(adj.length?'<span class="muted">'+adj.join(' · ')+' · </span>':'')+plays+'</span></div>';
+      if(pk)body+='<div class="line"><span>club</span><span class="go-text">'+esc(pk.c.name)+(pk.longer?' <span class="muted">· '+esc(pk.longer.id)+' if soft or into</span>':'')+(pk.note?' <span class="muted">· '+pk.note+'</span>':'')+'</span></div>';}
+    const hz=(g.haz||[]).map(z=>({t:z.t,d:yds(pos,z)})).filter(z=>z.d<d+40).sort((a,b)=>a.d-b.d).slice(0,3);
+    if(hz.length)body+='<div class="line"><span>ahead</span><span>'+hz.map(z=>esc(z.t)+' '+z.d).join(' · ')+'</span></div>';
+  }else{body+='<div class="center"><div class="num big">'+ty+'</div><div class="lbl">'+esc(S.settings.tee)+' tee yardage</div></div>'+
+    '<div class="center lbl">'+(pos?'No green saved for this hole yet.':(gpsErr||'Waiting for GPS…'))+'</div>'+(pos?btn('go:map','Map this green','sm'):'');}
+  const note=(S.notes[S.settings.course]||{})[h];if(note)body+='<div class="line"><span>note</span><span style="color:var(--warn)">'+esc(note.length>42?note.slice(0,42)+'…':note)+'</span></div>';
+  const sc=hd?'<span class="muted">· '+(hd.strokes||0)+' so far</span>':'';
+  return hdr('<b>Hole '+(h+1)+'</b> · par '+p+' · '+ty+' '+sc,'<span id="gps">'+gpsText()+'</span> · '+clock())+
+  '<div class="body">'+body+'</div>'+
+  '<div class="row">'+btn('go:club','Mark shot','go','data-focus')+btn('go:putt','Putt')+btn('go:score','Score'+(hd&&hd.strokes?' · '+hd.strokes:''))+'</div>'+
+  '<div class="row">'+btn('hole:-1','◀ Hole','sm')+btn('hole:1','Hole ▶','sm')+btn('pin','Pin: '+S.ui.pin,'sm')+btn('go:more','More','sm')+'</div>';};
+
+V.more=()=>hdr('<b>Hole '+(S.ui.hole+1)+'</b> · more')+'<div class="body">'+
+  '<div class="row">'+btn('go:map','Map green','','data-focus')+btn('go:haz','Add hazard')+'</div>'+
+  '<div class="row">'+btn('go:notes','Hole notes')+btn('go:wind','Wind and slope'+(S.settings.tournament?' (off)':''))+'</div>'+
+  '<div class="row">'+btn('say','Say distance')+btn('go:summary','Round so far')+'</div>'+
+  '<div class="row">'+btn('go:board','Leaderboard')+btn('go:players','Players')+'</div>'+
+  '<div class="row">'+btn('finish','Finish round','warn')+btn('home','Home')+'</div></div>'+backBtn();
+
+V.score=()=>{const h=S.ui.hole,p=par(h),hd=hole();if(!hd)return V.home();const r=round(),tp=toParText(r);const ps=players(r);const diff=hd.strokes?hd.strokes-p:null;
+  const word=diff===null?'':diff<=-2?'eagle':diff===-1?'birdie':diff===0?'par':diff===1?'bogey':diff===2?'double':'+'+diff;
+  const fir=p>3?'<div class="row">'+btn('fir:1','Fairway hit','sm',hd.fir===true?'aria-pressed="true"':'')+btn('fir:0','Missed fairway','sm',hd.fir===false?'aria-pressed="true"':'')+'</div>':'';
+  if(ps.length===1)return hdr('<b>Hole '+(h+1)+'</b> · par '+p,'round '+tp.txt+' thru '+tp.n)+'<div class="body">'+
+    '<div class="row" style="align-items:center">'+btn('adj:strokes:-1','−','sm')+'<div class="center" style="flex:2"><div class="num big">'+hd.strokes+'</div><div class="lbl">strokes · '+(word||'–')+'</div></div>'+btn('adj:strokes:1','+','sm','data-focus')+'</div>'+
+    '<div class="row" style="align-items:center">'+btn('adj:putts:-1','−','sm')+'<div class="center" style="flex:2"><div class="num mid">'+hd.putts+'</div><div class="lbl">putts</div></div>'+btn('adj:putts:1','+','sm')+'</div>'+fir+
+    '</div><div class="row">'+backBtn()+btn('go:players','Players','sm')+btn('nexthole','Next hole ▶','go')+'</div>';
+  /* group scorecard: one row per player, strokes and putts */
+  const rows=ps.slice(0,4).map((pl,i)=>{const hh=pl.holes[h]||{strokes:0,putts:0};const d=hh.strokes?hh.strokes-p:null;const w=d===null?'':d<0?'<span class="go-text">'+(d<=-2?'eagle':'birdie')+'</span>':d===0?'par':d===1?'bogey':'+'+d;
+    if(pl.live)return '<div class="row" style="align-items:center;min-height:50px"><div style="flex:1.3"><b>'+esc(pl.name)+'</b> <span class="lbl">live</span></div><div class="center num mid" style="flex:1.2;font-size:36px">'+(hh.strokes||'–')+'</div><div class="lbl" style="flex:1.1">'+w+'</div><div class="center num" style="flex:1;font-size:28px">'+(hh.putts||0)+'<span class="lbl" style="font-size:16px"> putts</span></div></div>';
+    const a=pl.me?'adj':'oadj:'+pl.id;
+    return '<div class="row" style="align-items:center">'+'<div style="flex:1.1"><b>'+esc(pl.name)+'</b><div class="lbl" style="font-size:16px">'+(w||'&nbsp;')+'</div></div>'+btn(a+':strokes:-1','−','xs')+'<div class="center num mid" style="flex:.8;font-size:38px">'+hh.strokes+'</div>'+btn(a+':strokes:1','+','xs',i===0?'data-focus':'')+
+      '<div class="lbl" style="flex:.5;text-align:right;font-size:16px">putts</div>'+btn(a+':putts:-1','−','xs')+'<div class="center num" style="flex:.5;font-size:28px">'+hh.putts+'</div>'+btn(a+':putts:1','+','xs')+'</div>';}).join('');
+  return hdr('<b>Hole '+(h+1)+'</b> · par '+p+(r.code?' · code '+r.code:''),syncOn()?(syncErr?'<span class="bad-text">'+syncErr+'</span>':'live'):'')+'<div class="body" style="justify-content:flex-start;gap:6px">'+rows+(ps.length>4?'<div class="lbl center">+'+(ps.length-4)+' more on the leaderboard</div>':'')+fir+'</div>'+
+    '<div class="row">'+backBtn()+btn('go:board','Board','sm')+btn('nexthole','Next hole ▶','go')+'</div>';};
+
+V.board=()=>{const r=round();if(!r)return V.home();const c=COURSES[r.course]||course();const ps=players(r).map(p=>({...p,t:toParOf(p.holes,c)})).sort((a,b)=>(a.t.n?a.t.s/a.t.n:99)-(b.t.n?b.t.s/b.t.n:99));
+  const rows=ps.map((p,i)=>'<div class="line" style="font-size:'+(ps.length>3?20:23)+'px"><span style="color:var(--fg)">'+(i+1)+'. '+esc(p.name)+(p.live?' <span class="lbl">live</span>':'')+(p.me?' <span class="lbl">you</span>':'')+'</span><span>'+p.t.txt+' <span class="muted">thru '+p.t.n+' · '+p.t.putts+' putts</span></span></div>').join('');
+  let games='';if(ps.length>=2){const sk=skins(ps);games+='<div class="line"><span>skins'+(sk.carry?' <span class="muted">· '+sk.carry+' carrying</span>':'')+'</span><span>'+ps.map(p=>esc(p.name.split(' ')[0])+' '+sk.won[p.id]).join(' · ')+'</span></div>';
+    if(ps.length===2){const m=matchPlay(ps[0],ps[1]);games+='<div class="line"><span>match</span><span>'+(m.up===0?'all square':esc((m.up>0?ps[0]:ps[1]).name.split(' ')[0])+' '+Math.abs(m.up)+' up')+' <span class="muted">thru '+m.n+'</span></span></div>';}}
+  return hdr('<b>Leaderboard</b>'+(r.code?' · code '+r.code:''),syncOn()?(syncErr?'<span class="bad-text">'+syncErr+'</span>':(r.syncT?'synced '+Math.max(0,Math.round((Date.now()-r.syncT)/60000))+'m ago':'live')):'')+'<div class="body">'+rows+(games?'<div style="border-top:2px solid var(--line);margin-top:4px;padding-top:6px">'+games+'</div>':'')+
+    (ps.length===1?'<div class="lbl center">Add your buddies under Players. On their own glasses they can join with the code'+(r.code?' <b>'+r.code+'</b>':'')+'.</div>':'')+'</div>'+
+    '<div class="row">'+backBtn()+btn('go:players','Players','sm')+(syncOn()?btn('syncnow','Refresh','sm'):'')+'</div>';};
+
+V.players=()=>{const r=round();if(!r)return V.home();const ps=players(r);const recent=(S.recent||[]).filter(n=>!ps.some(p=>p.name===n)).slice(0,3);
+  return hdr('<b>Players</b>'+(r.code?' · code '+r.code:''),ps.length+' in this round')+'<div class="body" style="justify-content:flex-start">'+
+  ps.map(p=>'<div class="row" style="align-items:center"><div style="flex:2"><b>'+esc(p.name)+'</b> <span class="lbl">'+(p.me?'you':p.live?'live from their glasses':'scored by you')+'</span></div>'+(p.manual?btn('rmplayer:'+p.id,'Remove','xs warn'):'<div></div>')+'</div>').join('')+
+  (ps.length<6?'<div class="row" style="align-items:center"><input id="pname" type="text" maxlength="14" placeholder="'+(recent.length?'name':'RJ')+'" style="flex:2" '+(ps.length===1?'data-focus':'')+'>'+btn('addplayer','Add','sm go')+'</div>':'')+
+  (recent.length?'<div class="row">'+recent.map(n=>btn('addname:'+encodeURIComponent(n),'+ '+esc(n),'xs')).join('')+'</div>':'')+
+  '<div class="lbl center">'+(syncBase()?'Friends with their own Display glasses: open the app, Join a round, code <b>'+(r.code||'–')+'</b>.':'Players you add here are scored by you. For friends on their own glasses, set up live sync in Settings.')+'</div></div>'+
+  '<div class="row">'+backBtn('◀ Done')+btn('go:board','Leaderboard','sm')+'</div>';};
+
+V.club=()=>{const g=green();let sug=null;if(g&&pos&&!S.settings.tournament){const t=targetPt(g);const d=yds(pos,t);const w=windPct(bearing(pos,t));sug=pickClub(Math.round(d*(1+w.pct)+S.ui.elev/3));}
+  const clubs=S.bag.filter(c=>c.on);const hd=hole();const pend=hd&&hd.shots.length&&hd.shots[hd.shots.length-1].dist==null?hd.shots[hd.shots.length-1]:null;
+  return hdr('<b>Mark shot</b> · which club?',pos?gpsText():'<span class="bad-text">no GPS</span>')+'<div class="body">'+(pend?'<div class="lbl center">Marking here also measures your last '+esc(pend.club)+'.</div>':'')+
+  '<div class="grid4">'+clubs.map(c=>btn('shot:'+c.id,esc(c.id),'sm'+(sug&&sug.c.id===c.id?' go':''),sug&&sug.c.id===c.id?'data-focus':'')).join('')+btn('shot:Putter','Putt','sm')+'</div></div>'+
+  '<div class="row">'+backBtn()+btn('penalty','+1 penalty','sm warn')+'</div>';};
+
+V.missq=p=>{const hd=hole();const s=hd&&hd.shots[p.i];if(!s)return V.play();const tee=p.i===0&&par()>3;
+  return hdr('<b>'+esc(s.club)+'</b> · '+(s.dist?s.dist+' yds':'')+' · where did it end up?')+'<div class="body">'+
+  '<div class="grid3">'+btn('miss:'+p.i+':good',tee?'Fairway':'Good','go','data-focus')+btn('miss:'+p.i+':left','Left')+btn('miss:'+p.i+':right','Right')+btn('miss:'+p.i+':short','Short')+btn('miss:'+p.i+':long','Long')+btn('miss:'+p.i+':penalty','Penalty +1','warn')+'</div></div>'+btn('miss:'+p.i+':skip','Skip','sm');};
+
+V.map=()=>{const m=mapFor()||{haz:[]};const has=k=>m[k]?'✓ ':'';
+  return hdr('<b>Map hole '+(S.ui.hole+1)+'</b> · stand on the spot, then tap','<span id="gps">'+gpsText()+'</span>')+'<div class="body">'+
+  '<div class="lbl center">'+(pos?(pos.demo?'Demo GPS is on. Turn it off in Settings to map real greens.':'Walk to each spot and save it. ±'+Math.max(1,Math.round(pos.acc*1.09))+' yds right now.'):(gpsErr||'Waiting for GPS…'))+'</div>'+
+  '<div class="grid3">'+btn('savept:front',has('front')+'Front edge','',pos?'data-focus':'disabled')+btn('savept:mid',has('mid')+'Middle','',pos?'':'disabled')+btn('savept:back',has('back')+'Back edge','',pos?'':'disabled')+'</div>'+
+  '<div class="row">'+btn('go:haz','Add hazard here','sm',pos?'':'disabled')+btn('clearmap','Clear this hole','sm warn')+'</div>'+
+  (m.haz&&m.haz.length?'<div class="lbl center">Saved: '+m.haz.map(z=>esc(z.t)).join(', ')+'</div>':'')+'</div>'+backBtn('◀ Done');};
+
+V.haz=()=>hdr('<b>Hazard here</b> · what is it?','<span id="gps">'+gpsText()+'</span>')+'<div class="body"><div class="grid3">'+HAZ.map((t,i)=>btn('addhaz:'+t,t,'',i===0?'data-focus':'')).join('')+'</div><div class="lbl center">Saved at your current spot. Stand at the carry edge for water and bunkers.</div></div>'+backBtn();
+
+V.notes=()=>{const n=(S.notes[S.settings.course]||{})[S.ui.hole]||'';return hdr('<b>Hole '+(S.ui.hole+1)+' notes</b>')+'<div class="body"><textarea id="note" rows="5" placeholder="aim left of the bunker, green runs to the road…" data-focus>'+esc(n)+'</textarea></div><div class="row">'+backBtn('Cancel')+btn('savenote','Save','go')+'</div>';};
+
+V.wind=()=>{const w=S.settings.wind;const pressed=(k,v)=>w[k]===v?'aria-pressed="true"':'';
+  if(S.settings.tournament)return hdr('<b>Wind and slope</b>')+'<div class="body center"><div class="lbl">Tournament mode is on. Wind and slope help is hidden so you stay inside the rules. Turn it off in Settings for casual rounds.</div></div>'+backBtn();
+  return hdr('<b>Wind and slope</b>',S.settings.windMode==='auto'?(wx?'live · '+wx.speed+' mph from '+Math.round(wx.from)+'°':(wxErr||'live wind…')):'manual')+'<div class="body">'+
+  '<div class="grid4">'+btn('wdir:calm','Calm','sm',pressed('dir','calm'))+btn('wdir:into','Into','sm',pressed('dir','into'))+btn('wdir:down','Down','sm',pressed('dir','down'))+btn('wdir:cross','Cross','sm',pressed('dir','cross'))+'</div>'+
+  '<div class="grid4">'+[5,10,15,20].map(v=>btn('wspd:'+v,v+' mph','sm',pressed('speed',v))).join('')+'</div>'+
+  '<div class="row" style="align-items:center">'+btn('elev:-5','−5 ft','sm')+'<div class="center" style="flex:1.4"><div class="num mid">'+(S.ui.elev>0?'+':'')+S.ui.elev+'</div><div class="lbl">ft uphill to green (this shot)</div></div>'+btn('elev:5','+5 ft','sm','data-focus')+'</div>'+
+  '<div class="row">'+btn('windauto','Use live wind'+(S.settings.windMode==='auto'?' ✓':''),'sm')+btn('elev:0','Level','sm')+'</div></div>'+backBtn('◀ Done');};
+
+const PT={d:18,dir:'right',amt:'medium',slope:'flat'};
+V.putt=()=>{if(S.settings.tournament)return hdr('<b>Putt</b>')+'<div class="body center"><div class="lbl">Putt reading is hidden in tournament mode. You can still log putts.</div>'+btn('logputt','Log a putt','go','data-focus')+'</div>'+backBtn();
+  const pr=(k,v)=>PT[k]===v?'aria-pressed="true"':'';
+  return hdr('<b>Read a putt</b>','green: '+S.settings.green)+'<div class="body">'+
+  '<div class="row" style="align-items:center">'+btn('pd:-5','−5','sm')+btn('pd:-1','−1','sm')+'<div class="center" style="flex:1.6"><div class="num mid">'+PT.d+' ft</div></div>'+btn('pd:1','+1','sm','data-focus')+btn('pd:5','+5','sm')+'</div>'+
+  '<div class="grid3">'+btn('pt:dir:left','Breaks left','sm',pr('dir','left'))+btn('pt:dir:straight','Straight','sm',pr('dir','straight'))+btn('pt:dir:right','Breaks right','sm',pr('dir','right'))+'</div>'+
+  '<div class="grid3">'+btn('pt:amt:little','A little','sm',pr('amt','little'))+btn('pt:amt:medium','Medium','sm',pr('amt','medium'))+btn('pt:amt:lots','A lot','sm',pr('amt','lots'))+'</div>'+
+  '<div class="grid3">'+btn('pt:slope:up','Uphill','sm',pr('slope','up'))+btn('pt:slope:flat','Flat','sm',pr('slope','flat'))+btn('pt:slope:down','Downhill','sm',pr('slope','down'))+'</div></div>'+
+  '<div class="row">'+backBtn()+btn('go:read','Read it ▶','go')+'</div>';};
+
+function puttSVG(rd){const sign=rd.side==='left'?-1:rd.side==='right'?1:0;const off=Math.min(110,rd.cups*14);const ax=150+sign*off;
+  const path=sign?'M150 262 Q '+(150+sign*off*1.5)+' 160 150 72':'M150 262 L150 72';
+  return '<svg viewBox="0 0 300 300" width="260" height="260" role="img" aria-label="putt path"><rect width="300" height="300" rx="16" fill="#060807"/>'+
+  (sign?'<line x1="'+ax+'" y1="72" x2="'+ax+'" y2="262" stroke="#3A443D" stroke-dasharray="4 7" stroke-width="2"/>':'')+
+  '<path d="'+path+'" fill="none" stroke="#64F2B5" stroke-width="4" stroke-linecap="round" stroke-dasharray="9 8"/>'+
+  '<circle cx="150" cy="72" r="11" fill="none" stroke="#F3F5F2" stroke-width="3"/>'+(sign?'<circle cx="'+ax+'" cy="72" r="7" fill="#64F2B5"/>':'')+
+  '<circle cx="150" cy="264" r="8" fill="#F3F5F2"/></svg>';}
+
+V.read=()=>{const rd=puttRead(PT.d,PT.dir,PT.amt,PT.slope);const aim=rd.side?'Aim '+fmtCups(rd.cups)+' '+rd.side:'Dead straight';
+  return hdr('<b>'+PT.d+' ft</b> · '+(PT.dir==='straight'?'straight':'breaks '+PT.dir)+' · '+PT.slope)+'<div class="body"><div class="split">'+puttSVG(rd)+
+  '<div style="flex:1"><div class="num mid go-text" style="font-size:38px;line-height:1">'+aim+'</div><div class="lbl" style="margin-top:8px">pace</div><div class="num mid">like '+rd.pace+' ft</div>'+
+  (S.putt.n?'<div class="lbl" style="margin-top:8px">learned from '+S.putt.n+' putts</div>':'<div class="lbl" style="margin-top:8px">tell it the result and it learns</div>')+'</div></div></div>'+
+  '<div class="grid3">'+btn('pres:made','Made it','go','data-focus')+btn('pres:high','Missed high')+btn('pres:low','Missed low')+'</div>'+
+  '<div class="grid3">'+btn('pres:short','Short','sm')+btn('pres:long','Long','sm')+btn('go:aim','Aim marker ▶','sm'+(rd.side?'':' muted'))+'</div>';};
+
+let aimState={set:false,holeHdg:null};
+V.aim=()=>{const rd=puttRead(PT.d,PT.dir,PT.amt,PT.slope);const ang=toD(Math.atan2(rd.inches/12,PT.d));
+  if(!aimState.set)return hdr('<b>Aim marker</b> · experimental',heading===null?'no compass yet':Math.round(heading)+'°')+'<div class="body center"><div class="lbl">Stand behind your ball, look straight at the hole, then tap Set. The lens will guide you to the aim spot.</div>'+btn('aimset','Set hole direction','go','data-focus')+'</div>'+backBtn();
+  const target=(aimState.holeHdg+(rd.side==='left'?-ang:rd.side==='right'?ang:0)+360)%360;const delta=heading===null?null:norm180(target-heading);
+  let big,sub;if(delta===null){big='–';sub='waiting for compass';}else if(Math.abs(delta)<=0.8){big='ON IT';sub='pick a blade of grass right there';}else{big=(delta>0?'▶ ':'◀ ')+Math.abs(delta).toFixed(1)+'°';sub=delta>0?'turn right a touch':'turn left a touch';}
+  return hdr('<b>Aim marker</b> · '+aim2(rd),'aim '+ang.toFixed(1)+'° '+(rd.side||''))+'<div class="body center"><div class="num huge '+(delta!==null&&Math.abs(delta)<=0.8?'go-text':'')+'" id="aimbig" style="font-size:120px">'+big+'</div><div class="lbl" id="aimsub">'+sub+'</div></div>'+
+  '<div class="row">'+btn('aimreset','Reset','sm')+backBtn('◀ Done')+'</div>';};
+const aim2=rd=>rd.side?fmtCups(rd.cups)+' '+rd.side:'straight';
+
+V.summary=p=>{const r=p&&p.id?S.rounds.find(x=>x.id===p.id):round();if(!r)return V.home();const c=COURSES[r.course]||course();const tp=toParText({holes:r.holes});
+  let strokes=0,putts=0,gir=0,firH=0,firY=0,best=null,worst=null;
+  r.holes.forEach((h,i)=>{if(!h.strokes)return;strokes+=h.strokes;putts+=h.putts;const d=h.strokes-c.par[i];if(h.strokes-h.putts<=c.par[i]-2)gir++;if(c.par[i]>3&&h.fir!==null){firH++;if(h.fir)firY++;}if(best===null||d<best.d)best={i,d};if(worst===null||d>worst.d)worst={i,d};});
+  const n=tp.n;const dur=r.end||Date.now();const mins=Math.round((dur-r.start)/60000);
+  return hdr('<b>'+(r.end?'Round':'Round so far')+'</b> · '+c.name+' · '+esc(r.tee),new Date(r.start).toLocaleDateString())+'<div class="body">'+
+  '<div class="split"><div class="num huge">'+(strokes||'–')+'</div><div style="flex:1"><div class="line"><span>to par</span><span>'+tp.txt+' thru '+n+'</span></div><div class="line"><span>putts</span><span>'+putts+(n?' · '+(putts/n).toFixed(1)+'/hole':'')+'</span></div><div class="line"><span>greens in reg</span><span>'+(n?Math.round(gir/n*100)+'%':'–')+'</span></div><div class="line"><span>fairways</span><span>'+(firH?Math.round(firY/firH*100)+'%':'–')+'</span></div><div class="line"><span>time</span><span>'+Math.floor(mins/60)+'h '+(mins%60)+'m</span></div></div></div>'+
+  (players(r).length>1?'<div class="lbl center">'+players(r).map(p=>esc(p.name.split(' ')[0])+' '+toParOf(p.holes,c).txt).join(' · ')+'</div>':'')+(best&&n>1?'<div class="lbl center">best: hole '+(best.i+1)+' ('+(best.d>0?'+':'')+best.d+') · worst: hole '+(worst.i+1)+' (+'+worst.d+')</div>':'')+'</div>'+
+  '<div class="row">'+backBtn()+(r.end?btn('home','Home','sm'):btn('finish','Finish round','sm warn'))+'</div>';};
+
+V.finishq=()=>hdr('<b>Finish this round?</b>')+'<div class="body center"><div class="lbl">It saves to your stats. You can keep playing if you tapped this by mistake.</div><div class="row">'+btn('back','Keep playing','','data-focus')+btn('finish2','Finish round','go')+'</div></div>';
+
+/* range */
+let RG=null;
+V.range=()=>hdr('<b>Range</b>','best game: '+S.range.best)+'<div class="body">'+
+  '<div class="row">'+btn('rgstart','Target game','go','data-focus')+btn('go:cal','Dial in a club')+'</div>'+
+  '<div class="row">'+btn('go:tempo','Tempo trainer')+btn('go:head','Head-still check')+'</div></div>'+backBtn();
+function rgTarget(){const cl=S.bag.filter(c=>c.on);const lo=Math.min(...cl.map(c=>c.carry))-20,hi=Math.max(...cl.map(c=>c.carry));return Math.round((lo+Math.random()*(hi-lo))/5)*5;}
+V.rgame=()=>{if(!RG)return V.range();if(RG.n>=10){return hdr('<b>Target game</b> · done')+'<div class="body center"><div class="num huge">'+RG.pts+'</div><div class="lbl">out of 30'+(RG.pts>=S.range.best&&RG.pts>0?' · <span class="go-text">new best</span>':' · best '+S.range.best)+'</div></div><div class="row">'+btn('rgstart','Play again','go','data-focus')+btn('back','Done','sm')+'</div>';}
+  const pk=S.settings.tournament?null:pickClub(RG.target);
+  return hdr('<b>Shot '+(RG.n+1)+' of 10</b>','points '+RG.pts)+'<div class="body center"><div class="lbl">hit it</div><div class="num huge">'+RG.target+'</div>'+(pk?'<div class="lbl">'+esc(pk.c.name)+(pk.note?' · '+pk.note:'')+'</div>':'')+'</div>'+
+  '<div class="grid3">'+btn('rg:3','Nailed it','go','data-focus')+btn('rg:1','Close')+btn('rg:0','Missed')+'</div>';};
+
+let CAL={club:null,vals:[],cur:null};
+V.cal=()=>{if(!CAL.club){return hdr('<b>Dial in a club</b> · pick one')+'<div class="body"><div class="grid4">'+S.bag.filter(c=>c.on).map((c,i)=>btn('calclub:'+c.id,esc(c.id)+'<br><span class="muted" style="font-size:16px">'+c.dist+'</span>','sm',i===0?'data-focus':'')).join('')+'</div></div>'+backBtn();}
+  const c=S.bag.find(x=>x.id===CAL.club);const avg=CAL.vals.length?Math.round(CAL.vals.reduce((a,b)=>a+b,0)/CAL.vals.length):null;
+  return hdr('<b>'+esc(c.name)+'</b> · hit 5, enter each carry','bag says '+c.carry+' carry')+'<div class="body">'+
+  '<div class="row" style="align-items:center">'+btn('calv:-10','−10','sm')+btn('calv:-5','−5','sm')+'<div class="center" style="flex:1.6"><div class="num mid">'+CAL.cur+'</div><div class="lbl">carry, this shot</div></div>'+btn('calv:5','+5','sm','data-focus')+btn('calv:10','+10','sm')+'</div>'+
+  '<div class="lbl center">'+(CAL.vals.length?CAL.vals.join(' · ')+' → avg '+avg:'no shots yet')+'</div>'+
+  '<div class="row">'+btn('caladd','Add shot','go')+(avg!==null?btn('calsave','Save '+avg+' carry to bag'):'')+'</div></div><div class="row">'+btn('calreset','Start over','sm')+backBtn()+'</div>';};
+
+let TP={on:false,secs:0.8,raf:0,t0:0};
+V.tempo=()=>hdr('<b>Tempo</b> · 3 to 1','backswing '+TP.secs.toFixed(1)+'s')+'<div class="body center"><div class="num huge" id="tpword" style="font-size:110px">'+(TP.on?'…':'set')+'</div><div class="bar"><i id="tpbar"></i></div><div class="lbl">bar fills on the way back, flashes at the top, HIT on the way down</div></div>'+
+  '<div class="row">'+btn('tpsecs:-0.1','Slower','sm')+btn('tpsecs:0.1','Faster','sm')+btn('tptoggle',TP.on?'Stop':'Start','go','data-focus')+backBtn()+'</div>';
+function tempoLoop(ts){if(!TP.on)return;const cyc=1.2+TP.secs+TP.secs/3+0.6;const t=((ts-TP.t0)/1000)%cyc;const w=$('#tpword'),b=$('#tpbar');
+  let word,fill,color='var(--go)';
+  if(t<1.2){word='set';fill=0;}else if(t<1.2+TP.secs){word='back';fill=(t-1.2)/TP.secs;if(!TP.beeped1){beep(660,40);TP.beeped1=true;}}
+  else if(t<1.2+TP.secs+TP.secs/3){word='HIT';fill=1;color='var(--warn)';if(!TP.beeped2){beep(990,70);TP.beeped2=true;}}
+  else{word='…';fill=0;TP.beeped1=TP.beeped2=false;}
+  if(w&&w.textContent!==word)w.textContent=word;if(b){b.style.width=(fill*100)+'%';b.style.background=color;}
+  TP.raf=requestAnimationFrame(tempoLoop);}
+
+let HD={phase:'idle',base:null,maxDev:0,samples:[],timer:0,result:null};
+V.head=()=>{const last=S.head.slice(-4).reverse();let body='';
+  if(HD.phase==='idle')body='<div class="lbl center">Address the ball, tap Start, hold still for 2 seconds, then swing. It measures how far your head moved.</div>'+btn('hdstart','Start','go','data-focus');
+  else if(HD.phase==='settle')body='<div class="num huge warn-text" style="font-size:110px">hold</div><div class="lbl center">getting your still position…</div>';
+  else if(HD.phase==='swing')body='<div class="num huge go-text" style="font-size:110px">swing</div><div class="lbl center">measuring for 4 seconds</div>';
+  else{const r=HD.result;body='<div class="center"><div class="num huge">'+r.dev.toFixed(0)+'°</div><div class="lbl">'+(r.dev<4?'steady':r.dev<8?'some movement':'a lot of movement')+' · '+(r.dev<4?'nice and quiet':r.dev<8?'small sway, not bad':'head is moving through the swing')+'</div></div>'+btn('hdstart','Again','go','data-focus');}
+  return hdr('<b>Head-still check</b> · experimental',heading===null&&HD.phase==='idle'?'needs motion sensor':'')+'<div class="body">'+body+(last.length&&HD.phase!=='swing'?'<div class="lbl center">recent: '+last.map(x=>x.toFixed(0)+'°').join(' · ')+'</div>':'')+'</div>'+backBtn();};
+
+/* stats */
+function allShots(){const out=[];S.rounds.forEach(r=>r.holes.forEach(h=>h.shots.forEach(s=>{if(s.dist&&s.club!=='Putter')out.push(s);})));return out;}
+function statsOverview(){const played=S.rounds.filter(r=>r.holes.some(h=>h.strokes>0));let n=0,sp=0,putts=0,gir=0,firH=0,firY=0,pen=0;let bestR=null;
+  played.forEach(r=>{const c=COURSES[r.course]||course();let rs=0,rn=0;r.holes.forEach((h,i)=>{if(!h.strokes)return;n++;rn++;const d=h.strokes-c.par[i];sp+=d;rs+=d;putts+=h.putts;if(h.strokes-h.putts<=c.par[i]-2)gir++;if(c.par[i]>3&&h.fir!==null){firH++;if(h.fir)firY++;}h.shots.forEach(s=>{if(s.miss==='penalty')pen++;});});if(rn===18&&(bestR===null||rs<bestR))bestR=rs;});
+  return {rounds:played.length,holes:n,toPar18:n?sp/n*18:null,putts18:n?putts/n*18:null,gir:n?gir/n:null,fir:firH?firY/firH:null,pen18:n?pen/n*18:0,bestR};}
+V.stats=()=>{const o=statsOverview();const f=(v,fn)=>v===null||v===undefined?'–':fn(v);const drv=allShots().filter(s=>s.club==='D');const dAvg=drv.length?Math.round(drv.reduce((a,s)=>a+s.dist,0)/drv.length):null;
+  let leak='play a round to find out';if(o.holes>=9){const pl=Math.max(0,(o.putts18||0)-32),al=Math.max(0,(0.45-(o.gir||0)))*18*0.8,tl=Math.max(0,(0.55-(o.fir===null?0.55:o.fir)))*14*0.5+(o.pen18||0);const m=Math.max(pl,al,tl);leak=m<0.5?'nothing big, keep going':pl===m?'putting · '+pl.toFixed(1)+' putts over 32':al===m?'approach shots · '+Math.round((o.gir||0)*100)+'% greens':'off the tee · '+(o.fir===null?'':Math.round(o.fir*100)+'% fairways')+(o.pen18?' · '+o.pen18.toFixed(1)+' penalties':'');}
+  return hdr('<b>Stats</b>',o.rounds+' round'+(o.rounds===1?'':'s')+' · '+o.holes+' holes')+'<div class="body">'+
+  '<div class="split"><div class="num huge" style="font-size:120px">'+f(o.toPar18,v=>(v>0?'+':'')+Math.round(v))+'</div><div style="flex:1"><div class="lbl">to par, per 18</div>'+
+  '<div class="line"><span>putts per 18</span><span>'+f(o.putts18,v=>v.toFixed(1))+'</span></div><div class="line"><span>greens in reg</span><span>'+f(o.gir,v=>Math.round(v*100)+'%')+'</span></div><div class="line"><span>fairways</span><span>'+f(o.fir,v=>Math.round(v*100)+'%')+'</span></div><div class="line"><span>best full round</span><span>'+f(o.bestR,v=>v===0?'E':(v>0?'+':'')+v)+'</span></div></div></div>'+
+  '<div class="line"><span>biggest leak</span><span class="warn-text">'+leak+'</span></div>'+
+  '<div class="line"><span>driver speed</span><span>'+FIT.clubs.D.cs+' mph club · '+FIT.clubs.D.bs+' ball <span class="muted">· fitting</span>'+(dAvg?' · ~'+Math.round(dAvg/2.5)+' mph est. from '+drv.length+' tracked':'')+'</span></div></div>'+
+  '<div class="row">'+backBtn()+btn('go:clubs','Clubs ▶','sm')+btn('go:misses','Misses ▶','sm')+'</div>';};
+function clubStats(){const m={};allShots().forEach(s=>{const c=m[s.club]=m[s.club]||{n:0,sum:0,miss:{}};c.n++;c.sum+=s.dist;if(s.miss)c.miss[s.miss]=(c.miss[s.miss]||0)+1;});return m;}
+V.clubs=()=>{const m=clubStats();const rows=S.bag.filter(c=>m[c.id]).map(c=>{const s=m[c.id];return '<div>'+esc(c.id)+'</div><div class="r">'+c.carry+'</div><div class="r">'+c.dist+'</div><div class="r go-text">'+Math.round(s.sum/s.n)+'</div><div class="r muted">'+s.n+'</div>';});
+  return hdr('<b>Clubs</b> · real distances','from shot tracking')+'<div class="body">'+(rows.length?'<div class="tbl" style="grid-template-columns:1fr 1fr 1fr 1.2fr .8fr"><div class="h">club</div><div class="h r">carry</div><div class="h r">total</div><div class="h r">real total</div><div class="h r">shots</div>'+rows.slice(0,9).join('')+'</div>'+(rows.length>9?'<div class="lbl center">+'+(rows.length-9)+' more</div>':''):'<div class="lbl center">Mark your shots during a round and your real averages show up here. Tap a club in My bag to update its number.</div>')+'</div>'+
+  '<div class="row">'+backBtn()+(rows.length?btn('applyreal','Use real totals in bag','sm'):'')+'</div>';};
+V.misses=()=>{const m=clubStats();const rows=S.bag.filter(c=>m[c.id]&&Object.keys(m[c.id].miss).length).map(c=>{const s=m[c.id];const tot=Object.values(s.miss).reduce((a,b)=>a+b,0);const top2=Object.entries(s.miss).sort((a,b)=>b[1]-a[1]).slice(0,2).map(([k,v])=>k+' '+Math.round(v/tot*100)+'%').join(' · ');return '<div class="line"><span>'+esc(c.id)+'</span><span>'+top2+'</span></div>';});
+  return hdr('<b>Misses</b> · where each club goes')+'<div class="body">'+(rows.length?rows.slice(0,8).join(''):'<div class="lbl center">After each shot you mark, tell it where the ball went. Patterns show up here.</div>')+'</div>'+backBtn();};
+
+/* bag */
+V.bag=()=>hdr('<b>My bag</b> · tap a club','carry · total')+'<div class="body"><div class="grid4">'+S.bag.map((c,i)=>btn('go:bagclub:'+c.id,esc(c.id)+'<br><span style="font-size:16px;color:'+(c.on?'var(--dim)':'var(--bad)')+'">'+(c.on?c.carry+' · '+c.dist:'out')+'</span>','sm',i===0?'data-focus':'')).join('')+'</div></div><div class="row">'+backBtn()+btn('go:fit','Fitting results','sm')+btn('bagreset','Generic bag','sm warn')+'</div>';
+V.fit=()=>hdr('<b>Fitting</b> · '+FIT.date,'TrackMan')+'<div class="body" style="justify-content:flex-start;gap:6px"><div class="lbl">'+esc(FIT.fitter)+' · recommended set</div>'+FIT.recommended.map(r=>'<div style="font-size:20px">'+esc(r)+'</div>').join('')+
+  '<div class="tbl" style="grid-template-columns:.8fr 1fr 1fr 1fr 1fr;margin-top:6px;font-size:19px"><div class="h">club</div><div class="h r">club mph</div><div class="h r">ball mph</div><div class="h r">carry</div><div class="h r">total</div>'+Object.entries(FIT.clubs).map(([k,f])=>'<div>'+k+'</div><div class="r">'+f.cs+'</div><div class="r">'+f.bs+'</div><div class="r go-text">'+f.carry+'</div><div class="r">'+f.total+'</div>').join('')+'</div>'+
+  '<div class="lbl" style="font-size:18px;margin-top:4px">'+esc(FIT.tendency)+'</div></div><div class="row">'+backBtn()+btn('loadfit','Load fitted bag','sm go')+'</div>';
+V.bagclub=p=>{const c=S.bag.find(x=>x.id===p.id);if(!c)return V.bag();const f=FIT.clubs[c.id];
+  return hdr('<b>'+esc(c.name)+'</b>',f?'fitted '+FIT.date:'')+'<div class="body">'+
+  '<div class="row" style="align-items:center">'+btn('bagc:'+c.id+':-5','−5','sm')+'<div class="center" style="flex:1.6"><div class="num big">'+c.carry+'</div><div class="lbl">carry · used for club picks</div></div>'+btn('bagc:'+c.id+':5','+5','sm','data-focus')+'</div>'+
+  '<div class="row" style="align-items:center">'+btn('bagd:'+c.id+':-5','−5','sm')+'<div class="center" style="flex:1.6"><div class="num mid">'+c.dist+'</div><div class="lbl">total with roll</div></div>'+btn('bagd:'+c.id+':5','+5','sm')+'</div>'+
+  (f?'<div class="lbl center" style="font-size:18px">'+esc(f.model)+' · club '+f.cs+' mph · ball '+f.bs+' mph · spin '+f.spin+' · launch '+f.launch+'° · '+f.shots+' shots · miss '+esc(f.side)+(f.note?'<br>'+esc(f.note):'')+'</div>':'')+
+  '<div class="row">'+btn('bagon:'+c.id,c.on?'In the bag ✓':'Not in bag','sm',c.on?'aria-pressed="true"':'')+btn('bagcal:'+c.id,'Dial it in at the range','sm')+'</div></div>'+backBtn('◀ Done');};
+
+/* settings */
+V.settings=()=>{const s=S.settings;return hdr('<b>Settings</b>')+'<div class="body">'+
+  '<div class="row">'+btn('go:setcourse','Course: '+course().name,'sm','data-focus')+btn('go:settee','Tees: '+esc(s.tee),'sm')+'</div>'+
+  '<div class="row">'+btn('tog:tournament','Tournament mode: '+(s.tournament?'ON':'off'),'sm'+(s.tournament?' warn':''))+btn('cyc:green','Greens: '+s.green,'sm')+'</div>'+
+  '<div class="row">'+btn('tog:voice','Voice: '+(s.voice?'on':'off'),'sm')+btn('tog:sound','Sounds: '+(s.sound?'on':'off'),'sm')+btn('tog:demo','Demo GPS: '+(s.demo?'ON':'off'),'sm'+(s.demo?' warn':''))+'</div>'+
+  '<div class="row">'+btn('go:setname','My name: '+esc(s.name),'sm')+btn('go:setsync','Live sync: '+(s.sync?'on':'off'),'sm')+'</div>'+
+  '<div class="row">'+btn('go:backup','Backup / restore','sm')+btn('go:resetq','Erase everything','sm warn')+'</div>'+
+  '<div class="lbl center">Tournament mode hides club picks, wind, slope and putt reads so the app stays inside the rules.</div></div>'+backBtn();};
+V.setname=()=>hdr('<b>My name</b>','shows on the leaderboard')+'<div class="body"><input id="nm" type="text" maxlength="14" value="'+esc(S.settings.name)+'" data-focus></div><div class="row">'+backBtn('Cancel')+btn('savename','Save','go')+'</div>';
+V.setsync=()=>hdr('<b>Live sync</b>','free Firebase database')+'<div class="body"><div class="lbl">Paste your Firebase Realtime Database URL. Everyone in the group uses the same one. Leave empty to turn sync off.</div><input id="sy" type="text" placeholder="https://your-app-default-rtdb.firebaseio.com" value="'+esc(S.settings.sync)+'" data-focus><div class="lbl">Rounds then get a 4-letter code your buddies type in Join a round.</div></div><div class="row">'+backBtn('Cancel')+btn('savesync','Save','go')+'</div>';
+V.setcourse=()=>hdr('<b>Course</b>')+'<div class="body"><div class="row">'+Object.keys(COURSES).map(k=>btn('setcourse:'+k,COURSES[k].name,'',S.settings.course===k?'aria-pressed="true" data-focus':'')).join('')+'</div></div>'+backBtn();
+V.settee=()=>hdr('<b>Tees</b> · '+course().name)+'<div class="body"><div class="grid3">'+teeList().map(t=>btn('settee:'+t,t,'',S.settings.tee===t?'aria-pressed="true" data-focus':'')).join('')+'</div></div>'+backBtn();
+V.resetq=()=>hdr('<b>Erase everything?</b>')+'<div class="body center"><div class="lbl">Rounds, maps, notes, bag and stats on this device. There is no undo. Make a backup first if you want one.</div><div class="row">'+btn('back','Keep my data','','data-focus')+btn('reset2','Erase it all','warn')+'</div></div>';
+V.backup=()=>hdr('<b>Backup</b> · copy this text somewhere safe')+'<div class="body"><textarea id="bk" rows="6" data-focus>'+esc(JSON.stringify(S))+'</textarea><div class="lbl center">To restore on another device, paste a backup into this box and tap Restore.</div></div><div class="row">'+backBtn()+btn('copybk','Copy','sm')+btn('restore','Restore','sm warn')+'</div>';
+
+/* ---------- actions ---------- */
+const A={};
+A.back=()=>back();A.home=()=>home();
+A.go=(name,id)=>{if(name==='bagclub')go('bagclub',{id});else go(name);};
+A.start=()=>{startRound();go('play');pushMine();};
+A.join2=()=>{const v=(($('#code')||{}).value||'').trim().toUpperCase();if(v.length<3){const i=$('#code');if(i){i.value='';i.placeholder='4 letters';}return;}startRound(v);stack=[{name:'home'},{name:'play'}];render();ensureTrap();pushMine();pullOthers(true);};
+A.syncnow=()=>pullOthers(true);
+A.savename=()=>{const v=(($('#nm')||{}).value||'').trim();if(v)S.settings.name=v.slice(0,14);save();changed();back();};
+A.savesync=()=>{S.settings.sync=(($('#sy')||{}).value||'').trim();save();back();};
+A.oadj=(id,k,d)=>{const r=round();const o=r&&r.others.find(x=>x.id===id);if(!o)return;const hh=o.holes[S.ui.hole];hh[k]=Math.max(0,hh[k]+Number(d));if(k==='putts'&&Number(d)>0)hh.strokes++;if(k==='putts'&&Number(d)<0&&hh.strokes>0)hh.strokes--;save();render(true);};
+A.addplayer=()=>{const v=(($('#pname')||{}).value||'').trim();if(!v)return;addPlayer(v);};
+A.addname=n=>addPlayer(decodeURIComponent(n));
+A.rmplayer=id=>{const r=round();if(!r)return;r.others=r.others.filter(o=>o.id!==id);save();render(true);};
+A.resume=()=>{go('play');pullOthers(true);};
+function addPlayer(name){const r=round();if(!r)return;name=name.slice(0,14);r.others.push({id:'o'+Date.now().toString(36),name,holes:Array.from({length:18},()=>({strokes:0,putts:0,fir:null}))});S.recent=[name,...(S.recent||[]).filter(n=>n!==name)].slice(0,6);save();render();}
+A.hole=d=>{S.ui.hole=(S.ui.hole+Number(d)+18)%18;S.ui.elev=0;S.ui.pin='mid';save();render();};
+A.pin=()=>{S.ui.pin={mid:'back',back:'front',front:'mid'}[S.ui.pin]||'mid';save();render();};
+A.say=()=>{const g=green();if(g&&pos){const d=yds(pos,targetPt(g));S.settings.voice||(S.settings.voice=true,save());speak(d+' to the '+S.ui.pin);}else speak('No green saved for hole '+(S.ui.hole+1));popTo('play');};
+A.adj=(k,d)=>{const h=hole();if(!h)return;h[k]=Math.max(0,h[k]+Number(d));if(k==='putts'&&Number(d)>0)h.strokes++;if(k==='putts'&&Number(d)<0&&h.strokes>0)h.strokes--;save();changed();render(true);};
+A.fir=v=>{const h=hole();if(!h)return;h.fir=v==='1';save();changed();render(true);};
+A.nexthole=()=>{const hd=hole();if(hd){const g=mapFor()||green();const last=hd.shots[hd.shots.length-1];if(last&&last.dist==null&&g&&g.mid&&last.lat){last.dist=yds(last,g.mid);last.miss=last.miss||'green';}}
+  S.ui.hole=(S.ui.hole+1)%18;S.ui.elev=0;S.ui.pin='mid';save();changed();stack.pop();render();};
+A.shot=id=>{const hd=hole();if(!hd){startRound();}const h=hole();const name=id==='Putter'?'Putter':((S.bag.find(c=>c.id===id)||{}).name||id);
+  if(id==='Putter'){logPutt(1);back();return;}
+  const prev=h.shots.length?h.shots[h.shots.length-1]:null;let ask=null;
+  if(prev&&prev.dist==null&&prev.lat&&pos){prev.dist=yds(prev,pos);ask=h.shots.length-1;}
+  h.shots.push({club:id,lat:pos?pos.lat:null,lon:pos?pos.lon:null,t:Date.now(),dist:null,miss:null});h.strokes++;save();changed();
+  stack.pop();if(ask!==null)go('missq',{i:ask});else render();};
+A.penalty=()=>{const h=hole();if(!h)return;h.strokes++;save();changed();back();};
+A.miss=(i,v)=>{const h=hole();const s=h&&h.shots[Number(i)];if(s&&v!=='skip'){s.miss=v;if(v==='penalty')h.strokes++;if(Number(i)===0&&par()>3)h.fir=(v==='good');}save();changed();stack.pop();render();};
+A.savept=k=>{if(!pos||pos.demo)return;setMap(m=>{m[k]={lat:pos.lat,lon:pos.lon};});render(true);};
+A.clearmap=()=>{const c=S.settings.course;if(S.maps[c])delete S.maps[c][S.ui.hole];save();render(true);};
+A.addhaz=t=>{if(!pos||pos.demo){back();return;}setMap(m=>{m.haz.push({t,lat:pos.lat,lon:pos.lon});});back();};
+A.savenote=()=>{const v=($('#note')||{}).value||'';S.notes[S.settings.course]=S.notes[S.settings.course]||{};if(v.trim())S.notes[S.settings.course][S.ui.hole]=v.trim();else delete S.notes[S.settings.course][S.ui.hole];save();popTo('play');};
+A.wdir=d=>{S.settings.wind.dir=d;S.settings.windMode='manual';if(d==='calm')S.settings.wind.speed=0;else if(!S.settings.wind.speed)S.settings.wind.speed=10;save();render(true);};
+A.wspd=v=>{S.settings.wind.speed=Number(v);S.settings.windMode='manual';if(S.settings.wind.dir==='calm')S.settings.wind.dir='into';save();render(true);};
+A.elev=v=>{S.ui.elev=Number(v)===0?0:Math.max(-60,Math.min(60,S.ui.elev+Number(v)));save();render(true);};
+A.windauto=async()=>{S.settings.windMode='auto';save();render(true);await fetchWind();if(!wx){S.settings.windMode='manual';save();}render(true);};
+A.pd=d=>{PT.d=Math.max(2,Math.min(90,PT.d+Number(d)));render(true);};
+A.pt=(k,v)=>{PT[k]=v;render(true);};
+A.pres=v=>{if(v==='high')S.putt.breakK=Math.max(0.4,S.putt.breakK*0.9);if(v==='low')S.putt.breakK=Math.min(2.5,S.putt.breakK*1.1);if(v==='short')S.putt.paceK=Math.min(1.5,S.putt.paceK*1.05);if(v==='long')S.putt.paceK=Math.max(0.6,S.putt.paceK*0.95);S.putt.n++;logPutt(1);save();aimState={set:false,holeHdg:null};stack.pop();stack.pop();render();};
+A.logputt=()=>{logPutt(1);back();};
+A.aimset=async()=>{const ok=await startOrient();if(!ok||heading===null){const s=$('.body .lbl');if(s)s.textContent='No compass reading yet. Move the glasses a little and try again.';return;}aimState={set:true,holeHdg:heading};orientCb=()=>{if(current().name==='aim')render(true);};render();};
+A.aimreset=()=>{aimState={set:false,holeHdg:null};render();};
+A.finish=()=>go('finishq');
+A.finish2=()=>{const r=round();if(r){pushMine();r.end=Date.now();S.active=null;save();stack=[{name:'home'},{name:'summary',p:{id:r.id}}];render();ensureTrap();}else home();};
+A.rgstart=()=>{RG={n:0,pts:0,target:rgTarget()};stack[stack.length-1].name==='rgame'?render():go('rgame');};
+A.rg=p=>{RG.pts+=Number(p);RG.n++;RG.target=rgTarget();if(RG.n>=10){S.range.games.push({t:Date.now(),pts:RG.pts});if(RG.pts>S.range.best)S.range.best=RG.pts;save();}render();};
+A.calclub=id=>{const c=S.bag.find(x=>x.id===id);CAL={club:id,vals:[],cur:c.carry};render();};
+A.calv=d=>{CAL.cur=Math.max(10,CAL.cur+Number(d));render(true);};
+A.caladd=()=>{CAL.vals.push(CAL.cur);render(true);};
+A.calsave=()=>{const c=S.bag.find(x=>x.id===CAL.club);const roll=c.dist-c.carry;c.carry=Math.round(CAL.vals.reduce((a,b)=>a+b,0)/CAL.vals.length/5)*5;c.dist=c.carry+roll;save();CAL={club:null,vals:[],cur:null};back();};
+A.calreset=()=>{CAL={club:null,vals:[],cur:null};render();};
+A.bagcal=id=>{const c=S.bag.find(x=>x.id===id);CAL={club:id,vals:[],cur:c.carry};go('cal');};
+A.tpsecs=d=>{TP.secs=Math.max(0.5,Math.min(1.3,Math.round((TP.secs+Number(d))*10)/10));render(true);};
+A.tptoggle=()=>{TP.on=!TP.on;if(TP.on){TP.t0=performance.now();TP.beeped1=TP.beeped2=false;beep(440,30);TP.raf=requestAnimationFrame(tempoLoop);}else cancelAnimationFrame(TP.raf);render(true);};
+A.hdstart=async()=>{const ok=await startOrient();if(!ok){HD.phase='idle';render();const s=$('.body .lbl');if(s)s.textContent='Motion sensor not available here.';return;}
+  HD={phase:'settle',base:null,maxDev:0,samples:[],result:null};render();
+  const samples=[];orientCb=e=>{if(typeof e.beta==='number')samples.push({b:e.beta,g:e.gamma||0,a:heading||0});};
+  setTimeout(()=>{if(HD.phase!=='settle')return;const n=samples.length||1;HD.base={b:samples.reduce((x,s)=>x+s.b,0)/n,g:samples.reduce((x,s)=>x+s.g,0)/n};samples.length=0;HD.phase='swing';render();beep(880,60);
+    setTimeout(()=>{if(HD.phase!=='swing')return;let max=0;samples.forEach(s=>{const d=Math.hypot(s.b-HD.base.b,s.g-HD.base.g);if(d>max)max=d;});HD.phase='done';HD.result={dev:max};S.head.push(max);if(S.head.length>20)S.head.shift();save();orientCb=null;render();beep(660,80);},4000);},2000);};
+A.applyreal=()=>{const m=clubStats();S.bag.forEach(c=>{if(m[c.id]&&m[c.id].n>=3)c.dist=Math.round(m[c.id].sum/m[c.id].n/5)*5;});save();back();};
+A.bagd=(id,d)=>{const c=S.bag.find(x=>x.id===id);c.dist=Math.max(c.carry,c.dist+Number(d));save();render(true);};
+A.bagc=(id,d)=>{const c=S.bag.find(x=>x.id===id);c.carry=Math.max(15,c.carry+Number(d));if(c.dist<c.carry)c.dist=c.carry;save();render(true);};
+A.loadfit=()=>{S.bag=JSON.parse(JSON.stringify(FITTED_BAG));save();back();};
+A.bagon=id=>{const c=S.bag.find(x=>x.id===id);c.on=!c.on;save();render(true);};
+A.bagreset=()=>{S.bag=JSON.parse(JSON.stringify(GENERIC_BAG));save();render(true);};
+A.setcourse=k=>{S.settings.course=k;if(!COURSES[k].tees[S.settings.tee])S.settings.tee=Object.keys(COURSES[k].tees)[0];save();back();};
+A.settee=t=>{S.settings.tee=t;save();back();};
+A.tog=k=>{S.settings[k]=!S.settings[k];if(k==='demo'){if(S.settings.demo){stopDemo();}else{pos=null;}startGPS();}save();render(true);};
+A.cyc=k=>{const o=['slow','medium','fast'];S.settings[k]=o[(o.indexOf(S.settings[k])+1)%3];save();render(true);};
+A.reset2=()=>{try{localStorage.removeItem(KEY)}catch(e){}S=defaults();S.settings.demo=false;save();stopDemo();startGPS();home();};
+A.copybk=async b=>{const t=$('#bk');try{await navigator.clipboard.writeText(t.value);b.textContent='Copied ✓';}catch(e){t.focus();t.select();b.textContent='Select + copy';}};
+A.restore=()=>{try{const j=JSON.parse($('#bk').value);if(j&&j.settings&&j.bag){S=j;save();S=load();home();}}catch(e){const b=$('[data-a="restore"]');if(b)b.textContent='Not a backup';}};
+
+/* ---------- boot ---------- */
+startGPS();render();
+if('serviceWorker' in navigator&&location.protocol==='https:'&&!DESKTOP){try{navigator.serviceWorker.register('sw.js')}catch(e){}}
+</script>
+</body>
+</html>
